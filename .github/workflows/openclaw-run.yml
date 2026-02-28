@@ -1,0 +1,121 @@
+name: OpenClaw Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      task_path:
+        description: Optional path to normalized task json
+        required: false
+        default: ""
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  run-openclaw:
+    name: run-openclaw
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' && github.event.label.name == 'autoclaw') ||
+      (github.event_name == 'issue_comment' && !github.event.issue.pull_request && contains(github.event.comment.body, '/autoclaw run'))
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build normalized task from event
+        id: task
+        shell: bash
+        run: |
+          mkdir -p artifacts/intake
+
+          if [ -n "${{ github.event.inputs.task_path }}" ]; then
+            cp "${{ github.event.inputs.task_path }}" artifacts/intake/task.normalized.json
+          else
+            node <<'NODE'
+            const fs = require('node:fs');
+            const eventPath = process.env.GITHUB_EVENT_PATH;
+            const raw = fs.readFileSync(eventPath, 'utf8');
+            const event = JSON.parse(raw);
+
+            const issue = event.issue || {};
+            const issueNumber = issue.number || 0;
+            const issueTitle = issue.title || 'OpenClaw task';
+            const issueBody = issue.body || '';
+            const repo = process.env.GITHUB_REPOSITORY || 'ai-sdlc';
+
+            const task = {
+              id: `ISSUE-${issueNumber || 'MANUAL'}`,
+              repo,
+              branch: 'main',
+              requirements: `${issueTitle}\n\n${issueBody}`.trim(),
+              acceptance_criteria: [
+                'Требования задачи интерпретированы и зафиксированы',
+                'Smoke workflow успешно завершён',
+                'Артефакты прогона сохранены'
+              ],
+              constraints: [
+                'Не менять несвязанные файлы',
+                'Соблюдать CI policy репозитория'
+              ],
+              priority: 'medium'
+            };
+
+            fs.writeFileSync('artifacts/intake/task.normalized.json', JSON.stringify(task, null, 2));
+            NODE
+          fi
+
+          echo "task_path=artifacts/intake/task.normalized.json" >> "$GITHUB_OUTPUT"
+
+      - name: Validate config
+        run: pnpm run validate:config
+
+      - name: Run OpenClaw workflow smoke
+        run: pnpm run workflow:smoke -- "${{ steps.task.outputs.task_path }}" | tee artifacts/run-smoke.json
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: openclaw-run-artifacts
+          path: |
+            artifacts/intake/task.normalized.json
+            artifacts/run-smoke.json
+
+      - name: Comment on issue
+        if: github.event_name == 'issues' || github.event_name == 'issue_comment'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('node:fs');
+            const run = fs.readFileSync('artifacts/run-smoke.json', 'utf8');
+            const issueNumber = context.payload.issue.number;
+            const body = [
+              'OpenClaw workflow run completed.',
+              '',
+              '```json',
+              run,
+              '```'
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body
+            });

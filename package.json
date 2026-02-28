@@ -8,7 +8,8 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:unit": "vitest run",
-    "validate:config": "node scripts/validate-openclaw-config.mjs openclaw.yaml"
+    "validate:config": "node scripts/validate-openclaw-config.mjs openclaw.yaml",
+    "workflow:smoke": "node scripts/run-openclaw-workflow-smoke.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
