@@ -1,0 +1,16 @@
+{
+  "id": "ISSUE-101",
+  "repo": "ai-sdlc",
+  "branch": "feature/issue-101",
+  "requirements": "Добавить функцию normalizeTaskInput и валидацию обязательных полей",
+  "acceptance_criteria": [
+    "Невалидный input отклоняется",
+    "Валидный input нормализуется в контракт",
+    "Ошибки читаемо логируются"
+  ],
+  "constraints": [
+    "Не менять несвязанные файлы",
+    "Соблюдать lint/type rules"
+  ],
+  "priority": "high"
+}

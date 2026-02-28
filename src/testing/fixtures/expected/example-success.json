@@ -1,0 +1,10 @@
+{
+  "success": true,
+  "finalState": "ReadyForReview",
+  "checks": [
+    { "name": "analysis", "status": "passed" },
+    { "name": "tests", "status": "passed" },
+    { "name": "implementation", "status": "passed" },
+    { "name": "docs", "status": "passed" }
+  ]
+}

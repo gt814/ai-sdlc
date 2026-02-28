@@ -1,0 +1,23 @@
+{
+  "name": "ai-sdlc",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.12.3",
+  "scripts": {
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:unit": "vitest run",
+    "validate:config": "node scripts/validate-openclaw-config.mjs openclaw.yaml"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@typescript-eslint/eslint-plugin": "^8.15.0",
+    "@typescript-eslint/parser": "^8.15.0",
+    "eslint": "^8.57.1",
+    "typescript": "^5.6.3",
+    "tsx": "^4.19.2",
+    "vitest": "^2.1.5",
+    "yaml": "^2.6.1"
+  }
+}

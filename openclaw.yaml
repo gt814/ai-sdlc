@@ -1,0 +1,321 @@
+version: 1
+name: openclaw-sdlc-agent
+
+agent:
+  id: openclaw
+  mode: autonomous
+  description: >
+    SDLC automation agent: intake, analysis, decomposition, test-first,
+    implementation, verification loop, human escalation, and documentation.
+
+profiles:
+  active: mvp
+  available:
+    mvp:
+      max_fix_cycles: 3
+      allow_auto_push: false
+      require_human_on:
+        - ambiguous_requirements
+        - security_sensitive_changes
+        - data_migration
+        - protected_paths
+    prod:
+      max_fix_cycles: 5
+      allow_auto_push: false
+      require_human_on:
+        - ambiguous_requirements
+        - security_sensitive_changes
+        - data_migration
+        - protected_paths
+        - flaky_ci
+        - architecture_impact
+
+input:
+  sources:
+    github:
+      issues: true
+      pr_comments: true
+      labels_trigger:
+        - autoclaw
+      slash_commands:
+        - /autoclaw run
+    manual_dispatch: true
+  schema:
+    required:
+      - id
+      - repo
+      - branch
+      - requirements
+      - acceptance_criteria
+      - constraints
+      - priority
+    fields:
+      id:
+        type: string
+      repo:
+        type: string
+      branch:
+        type: string
+      requirements:
+        type: string
+      acceptance_criteria:
+        type: array
+        items: string
+      constraints:
+        type: array
+        items: string
+      priority:
+        type: enum
+        values: [low, medium, high, critical]
+  validation:
+    on_missing_acceptance_criteria: ask_human
+    on_missing_requirements: ask_human
+    on_invalid_schema: fail_intake
+
+pipeline:
+  initial_state: Intake
+  final_state: ReadyForReview
+  states:
+    - name: Intake
+      produces:
+        - artifacts/intake/task.normalized.json
+      exit_when:
+        - task_schema_validated
+      emits_check: analysis
+
+    - name: Analysis
+      produces:
+        - artifacts/analysis/technical_analysis.md
+        - artifacts/analysis/assumptions.md
+        - artifacts/analysis/questions.md
+      exit_when:
+        - risks_identified
+        - modules_identified
+        - nfr_constraints_identified
+      emits_check: analysis
+      human_gate_when:
+        - critical_uncertainty
+
+    - name: Breakdown
+      produces:
+        - artifacts/breakdown/workplan.md
+      exit_when:
+        - subtasks_defined
+        - each_subtask_has_dod
+      emits_check: implementation
+
+    - name: TestDesign
+      strategy: test_first
+      produces:
+        - artifacts/tests/test_plan.md
+        - artifacts/tests/coverage_map.md
+      exit_when:
+        - unit_or_integration_tests_added
+        - red_green_validation_completed
+      emits_check: tests
+
+    - name: Implement
+      rules:
+        - small_atomic_changes
+        - follow_repo_lint_and_style
+        - avoid_unrelated_files
+      produces:
+        - artifacts/implementation/change_summary.md
+      exit_when:
+        - planned_subtasks_implemented
+      emits_check: implementation
+
+    - name: TestRun
+      commands_from: project.test_command_resolution
+      produces:
+        - artifacts/verification/test_results.md
+      exit_when:
+        - all_required_checks_pass
+      on_fail: FixLoop
+      emits_check: tests
+
+    - name: FixLoop
+      max_cycles_from_profile: true
+      produces:
+        - artifacts/verification/fix_loop_log.md
+      classify_failures:
+        - incorrect_test
+        - implementation_bug
+        - flaky_infra
+      transitions:
+        - when: fixes_applied_and_checks_pass
+          to: Docs
+        - when: cycle_limit_reached
+          to: HumanGate
+        - when: flaky_infra_detected
+          to: HumanGate
+      emits_check: tests
+
+    - name: Docs
+      produces:
+        - artifacts/docs/release_notes.md
+      updates:
+        - README.md
+        - CHANGELOG.md
+        - docs/api.md
+      exit_when:
+        - docs_updated
+        - release_note_prepared
+      emits_check: docs
+
+    - name: HumanGate
+      emits_check: needs-human
+      produces:
+        - artifacts/escalation/escalation_report.md
+      required_sections:
+        - what_was_done
+        - what_failed
+        - root_cause_hypotheses
+        - proposed_options
+      resume_from_last_state_after_human_reply: true
+
+    - name: ReadyForReview
+      produces:
+        - artifacts/pr/pr_summary.md
+      exit_when:
+        - definition_of_done_met
+
+project:
+  test_command_resolution:
+    order:
+      - task.test_matrix_override
+      - repo.default_test_matrix
+      - autodetect
+    autodetect:
+      markers:
+        node:
+          any_of: [package.json]
+        python:
+          any_of: [pyproject.toml, requirements.txt]
+        go:
+          any_of: [go.mod]
+        rust:
+          any_of: [Cargo.toml]
+        java:
+          any_of: [pom.xml, build.gradle, build.gradle.kts]
+      matrices:
+        node:
+          - name: lint
+            required: true
+            command: npm run lint
+          - name: typecheck
+            required: false
+            command: npm run typecheck
+          - name: unit
+            required: true
+            command: npm run test -- --runInBand
+          - name: integration
+            required: false
+            command: npm run test:integration
+        python:
+          - name: lint
+            required: true
+            command: ruff check .
+          - name: typecheck
+            required: false
+            command: mypy .
+          - name: unit
+            required: true
+            command: pytest -q
+          - name: integration
+            required: false
+            command: pytest -q -m integration
+        go:
+          - name: lint
+            required: false
+            command: golangci-lint run
+          - name: unit
+            required: true
+            command: go test ./...
+        rust:
+          - name: lint
+            required: true
+            command: cargo clippy --all-targets -- -D warnings
+          - name: unit
+            required: true
+            command: cargo test
+        java:
+          - name: unit
+            required: true
+            command: ./gradlew test
+  default_test_matrix:
+    - name: lint
+      required: true
+      command: npm run lint
+    - name: typecheck
+      required: true
+      command: npm run typecheck
+    - name: unit
+      required: true
+      command: npm run test:unit
+    - name: integration
+      required: true
+      command: npm run test:integration
+  task_input_extensions:
+    test_matrix_override:
+      type: array
+      description: Optional per-task list of checks/commands for mixed-stack repositories.
+
+definition_of_done:
+  required:
+    - all_required_checks_green
+    - acceptance_criteria_covered_by_tests
+    - docs_updated
+    - artifacts_saved
+    - pr_summary_generated
+
+repository_policy:
+  protected_paths:
+    - .github/workflows/
+    - infra/
+    - security/
+    - migrations/
+  human_review_required_for:
+    - security
+    - migrations
+    - dependency_major_bumps
+    - auth_or_permission_logic
+  disallow_unrelated_file_changes: true
+
+github:
+  checks:
+    - analysis
+    - tests
+    - implementation
+    - docs
+    - needs-human
+  pr_artifacts:
+    checklist: artifacts/pr/checklist.md
+    logs_index: artifacts/run/log_index.md
+    test_summary: artifacts/verification/test_results.md
+    risks: artifacts/analysis/technical_analysis.md
+
+observability:
+  metrics:
+    - success_rate
+    - avg_fix_cycles
+    - time_to_ready_for_review
+    - escalation_rate
+  run_log_path: artifacts/run/run.log
+  audit_log_path: artifacts/run/audit.log
+
+safety:
+  secrets:
+    source: ci_vault_only
+    allow_plaintext_in_repo: false
+  dangerous_commands:
+    deny:
+      - "rm -rf /"
+      - "git reset --hard"
+      - "curl | sh"
+      - "chmod -R 777 /"
+  require_audit_log_for_all_actions: true
+
+artifacts:
+  root: artifacts/
+  keep_history: true
