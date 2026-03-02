@@ -48,37 +48,7 @@ jobs:
           if [ -n "${{ github.event.inputs.task_path }}" ]; then
             cp "${{ github.event.inputs.task_path }}" artifacts/intake/task.normalized.json
           else
-            node <<'NODE'
-            const fs = require('node:fs');
-            const eventPath = process.env.GITHUB_EVENT_PATH;
-            const raw = fs.readFileSync(eventPath, 'utf8');
-            const event = JSON.parse(raw);
-
-            const issue = event.issue || {};
-            const issueNumber = issue.number || 0;
-            const issueTitle = issue.title || 'OpenClaw task';
-            const issueBody = issue.body || '';
-            const repo = process.env.GITHUB_REPOSITORY || 'ai-sdlc';
-
-            const task = {
-              id: `ISSUE-${issueNumber || 'MANUAL'}`,
-              repo,
-              branch: 'main',
-              requirements: `${issueTitle}\n\n${issueBody}`.trim(),
-              acceptance_criteria: [
-                'Требования задачи интерпретированы и зафиксированы',
-                'Smoke workflow успешно завершён',
-                'Артефакты прогона сохранены'
-              ],
-              constraints: [
-                'Не менять несвязанные файлы',
-                'Соблюдать CI policy репозитория'
-              ],
-              priority: 'medium'
-            };
-
-            fs.writeFileSync('artifacts/intake/task.normalized.json', JSON.stringify(task, null, 2));
-            NODE
+            node scripts/build-normalized-task-from-event.mjs artifacts/intake/task.normalized.json
           fi
 
           echo "task_path=artifacts/intake/task.normalized.json" >> "$GITHUB_OUTPUT"
